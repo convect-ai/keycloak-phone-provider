@@ -96,177 +96,38 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
     public void validate(ValidationContext context) {
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         List<FormMessage> errors = new ArrayList<>();
-
         context.getEvent().detail(Details.REGISTER_METHOD, "form");
-        String eventError = Errors.INVALID_REGISTRATION;
-        KeycloakSession session = context.getSession();
         String phoneNumber = formData.getFirst(FIELD_PHONE_NUMBER);
+        String email = formData.getFirst(FIELD_EMAIL);
         String credentialType = formData.getFirst(PhoneConstants.FIELD_CREDENTIAL_TYPE);
-
+        String firstName = formData.getFirst(UserModel.FIRST_NAME);
+        String lastName = formData.getFirst(UserModel.LAST_NAME);
         boolean success = true;
 
-        if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_PHONE)) {
-            //使用手机号注册
-            if (Validation.isBlank(phoneNumber)) {
-                errors.add(new FormMessage(FIELD_PHONE_NUMBER, SupportPhonePages.Errors.MISSING.message()));
-                context.error(Errors.INVALID_REGISTRATION);
-                context.validationError(formData, errors);
-                success = false;
-            } else {
-                try {
-                    phoneNumber = Utils.canonicalizePhoneNumber(session, phoneNumber);
-                    if (!Utils.isDuplicatePhoneAllowed(session) &&
-                            Utils.findUserByPhone(session, context.getRealm(), phoneNumber).isPresent()) {
-                        context.error(Errors.INVALID_REGISTRATION);
-                        errors.add(new FormMessage(FIELD_PHONE_NUMBER, SupportPhonePages.Errors.EXISTS.message()));
-                        context.validationError(formData, errors);
-                        success = false;
-                    }
+        // Validate first and last name fields
+        if (Validation.isBlank(firstName)) {
+            errors.add(new FormMessage(UserModel.FIRST_NAME, Messages.MISSING_FIRST_NAME));
+            success = false;
+        }
+        if (Validation.isBlank(lastName)) {
+            errors.add(new FormMessage(UserModel.LAST_NAME, Messages.MISSING_LAST_NAME));
+            success = false;
+        }
 
-                } catch (PhoneNumberInvalidException e) {
-                    context.error(Errors.INVALID_REGISTRATION);
-                    errors.add(new FormMessage(FIELD_PHONE_NUMBER, e.getErrorType().message()));
-                    context.validationError(formData, errors);
-                    success = false;
-                }
-            }
-
-            String verificationCode = formData.getFirst(PhoneConstants.FIELD_VERIFICATION_CODE);
-            TokenCodeRepresentation tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess(phoneNumber, TokenCodeType.REGISTRATION);
-
-            if (Validation.isBlank(verificationCode) || tokenCode == null ||
-                    !tokenCode.getCode().equals(verificationCode)) {
-                context.error(Errors.INVALID_CODE);
-                context.getEvent().detail(PhoneConstants.FIELD_PHONE_NUMBER, phoneNumber);
-                errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
-                context.validationError(formData, errors);
-                success = false;
-            }
-
-            if (tokenCode != null) {
-                context.getSession().setAttribute(PhoneConstants.FIELD_TOKEN_ID, tokenCode.getId());
-            }
-
-            formData.remove(FIELD_EMAIL);
-            context.getEvent().detail(FIELD_PHONE_NUMBER, phoneNumber);
-            context.getEvent().detail(Details.USERNAME, phoneNumber);
-            formData.putSingle(UserModel.USERNAME, phoneNumber);
-
-            UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
-            UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
-
-            String username = profile.getAttributes().getFirstValue(UserModel.USERNAME);
-            context.getEvent().detail(Details.USERNAME, username);
-
-            try {
-                profile.validate();
-            } catch (ValidationException pve) {
-                if (pve.hasError(Messages.EMAIL_EXISTS)) {
-                    context.error(Errors.EMAIL_IN_USE);
-                } else if (pve.hasError(Messages.MISSING_EMAIL, Messages.MISSING_USERNAME, Messages.INVALID_EMAIL)) {
-                    context.error(Errors.INVALID_REGISTRATION);
-                } else if (pve.hasError(Messages.USERNAME_EXISTS)) {
-                    context.error(Errors.USERNAME_IN_USE);
-                }
-                success = false;
-                errors.addAll(Validation.getFormErrorsFromValidation(pve.getErrors()));
-            }
-
-        } else if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_EMAIL)) {
-            //使用邮箱注册，验证电子邮箱
-            formData.remove(PhoneConstants.FIELD_AREA_CODE);
-            formData.remove(PhoneConstants.FIELD_PHONE_NUMBER);
-            String email = formData.getFirst(Validation.FIELD_EMAIL);
-            boolean emailValid = true;
-
-            if (Validation.isBlank(email)) {
-                errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.MISSING_EMAIL));
-                emailValid = false;
-            } else if (!Validation.isEmailValid(email)) {
-                context.getEvent().detail(Details.EMAIL, email);
-                errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.INVALID_EMAIL));
-                emailValid = false;
-            }
-
-            System.out.println("emailValid: " + emailValid + ", duplicateEmailsAllowed: " + context.getRealm().isDuplicateEmailsAllowed() + ", email: " + email);
-
-            if (emailValid && !context.getRealm().isDuplicateEmailsAllowed()) {
-                boolean duplicateEmail = false;
-                try {
-                    if (session.users().getUserByEmail(context.getRealm(), email) != null) {
-                        duplicateEmail = true;
-                    }
-                } catch (ModelDuplicateException e) {
-                    duplicateEmail = true;
-                }
-                if (duplicateEmail) {
-                    eventError = Errors.EMAIL_IN_USE;
-                    formData.remove(Validation.FIELD_EMAIL);
-                    context.getEvent().detail(Details.EMAIL, email);
-                    errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.EMAIL_EXISTS));
-                }
-            }
-
-            System.out.println("errors: " + errors.size() + ", success: " + success + ", emailValid: " + emailValid + ", eventError: " + eventError);
-
-            //验证密码
-            if (Validation.isBlank(formData.getFirst(RegistrationPage.FIELD_PASSWORD))) {
-                errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD, Messages.MISSING_PASSWORD));
-            } else if (!formData.getFirst(RegistrationPage.FIELD_PASSWORD).equals(formData.getFirst(RegistrationPage.FIELD_PASSWORD_CONFIRM))) {
-                errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD_CONFIRM, Messages.INVALID_PASSWORD_CONFIRM));
-            }
-
-            System.out.println("errors: " + errors.size() + ", success: " + success + ", emailValid: " + emailValid + ", eventError: " + eventError);
-
-            if (formData.getFirst(RegistrationPage.FIELD_PASSWORD) != null) {
-                PolicyError err = context.getSession().getProvider(PasswordPolicyManagerProvider.class).validate(context.getRealm().isRegistrationEmailAsUsername() ? formData.getFirst(RegistrationPage.FIELD_EMAIL) : formData.getFirst(RegistrationPage.FIELD_USERNAME), formData.getFirst(RegistrationPage.FIELD_PASSWORD));
-                if (err != null) {
-                    errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD, err.getMessage(), err.getParameters()));
-                }
-            }
-
-            System.out.println("验证密码完成");
-            System.out.println("errors: " + errors.size() + ", success: " + success + ", emailValid: " + emailValid + ", eventError: " + eventError);
-
-            context.getEvent().detail(Details.EMAIL, email);
-            context.getEvent().detail(Details.USERNAME, email);
-            formData.putSingle(UserModel.USERNAME, email);
-
-            UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
-            UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
-
-            String username = profile.getAttributes().getFirstValue(UserModel.USERNAME);
-            context.getEvent().detail(Details.USERNAME, username);
-
-            System.out.println("errors: " + errors.size() + ", success: " + success + ", emailValid: " + emailValid + ", eventError: " + eventError + ", username: " + username);
-
-            for (FormMessage error : errors) {
-                System.out.println("error: " + error.getMessage());
-            }
-
-            try {
-                profile.validate();
-                System.out.println("验证通过");
-            } catch (ValidationException pve) {
-                System.out.println("验证失败");
-                if (pve.hasError(Messages.EMAIL_EXISTS)) {
-                    context.error(Errors.EMAIL_IN_USE);
-                } else if (pve.hasError(Messages.MISSING_EMAIL, Messages.MISSING_USERNAME, Messages.INVALID_EMAIL)) {
-                    context.error(Errors.INVALID_REGISTRATION);
-                } else if (pve.hasError(Messages.USERNAME_EXISTS)) {
-                    context.error(Errors.USERNAME_IN_USE);
-                }
-                success = false;
-                errors.addAll(Validation.getFormErrorsFromValidation(pve.getErrors()));
-            }
+        if (credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_PHONE)) {
+            // Phone registration validation logic
+            validatePhoneRegistration(context, formData, phoneNumber, errors);
+        } else if (credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_EMAIL)) {
+            // Email registration validation logic
+            validateEmailRegistration(context, formData, email, errors);
         } else {
-            //缺少参数
-            eventError = Errors.INVALID_INPUT;
+            context.error(Errors.INVALID_INPUT);
             errors.add(new FormMessage(null, MISSING_PHONE_NUMBER_OR_EMAIL));
+            success = false;
         }
 
         if (!errors.isEmpty() || !success) {
-            context.error(eventError);
+            context.error(Errors.INVALID_REGISTRATION);
             formData.remove(RegistrationPage.FIELD_PASSWORD);
             formData.remove(RegistrationPage.FIELD_PASSWORD_CONFIRM);
             context.validationError(formData, errors);
@@ -277,50 +138,46 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
 
     @Override
     public void success(FormContext context) {
-
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
-
-        String phoneNumber = formData.getFirst(FIELD_PHONE_NUMBER);
-        String email = formData.getFirst(UserModel.EMAIL);
-        String username = formData.getFirst(UserModel.USERNAME);
-
-        var session = context.getSession();
-
         String credentialType = formData.getFirst(PhoneConstants.FIELD_CREDENTIAL_TYPE);
+        UserProfileProvider profileProvider = context.getSession().getProvider(UserProfileProvider.class);
+        UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
+        UserModel user;
 
+        // Handling based on credential type
         if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_PHONE)) {
+            String phoneNumber;
             try {
-                phoneNumber = Utils.canonicalizePhoneNumber(session, phoneNumber);
+                phoneNumber = Utils.canonicalizePhoneNumber(context.getSession(), formData.getFirst(FIELD_PHONE_NUMBER));
             } catch (PhoneNumberInvalidException e) {
-                // verified in validate process
-                throw new IllegalStateException();
+                throw new RuntimeException(e);
             }
-            username = phoneNumber;
-            formData.add(UserModel.USERNAME, phoneNumber);
-            context.getEvent().detail(Details.USERNAME, username)
-                    .detail(Details.REGISTER_METHOD, "form")
-                    .detail(FIELD_PHONE_NUMBER, phoneNumber);
+            formData.putSingle(UserModel.USERNAME, phoneNumber);
+            context.getEvent().detail(Details.USERNAME, phoneNumber)
+                    .detail(FIELD_PHONE_NUMBER, phoneNumber)
+                    .detail(Details.REGISTER_METHOD, "phone");
+
+            user = profile.create(); // Create the user with the phone number as username
+            context.getSession().setAttribute(PhoneConstants.FIELD_PHONE_NUMBER, phoneNumber);
         } else if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_EMAIL)) {
-            System.out.println("使用邮箱注册");
-            username = email;
-            formData.add(UserModel.USERNAME, email);
-            context.getEvent().detail(Details.EMAIL, email);
-            context.getEvent().detail(Details.USERNAME, username).detail(Details.REGISTER_METHOD, "form").detail(FIELD_EMAIL, email);
+            String email = formData.getFirst(FIELD_EMAIL);
+            formData.putSingle(UserModel.USERNAME, email);
+            context.getEvent().detail(Details.USERNAME, email)
+                    .detail(FIELD_EMAIL, email)
+                    .detail(Details.REGISTER_METHOD, "email");
+
+            user = profile.create(); // Create the user with the email as username
+            context.getSession().setAttribute(UserModel.EMAIL, email);
+        } else {
+            throw new IllegalStateException("Invalid registration method.");
         }
 
-        UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
-        UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
-        UserModel user = profile.create();
-
-        //    UserModel user = context.getSession().users().addUser(context.getRealm(), username);
+        // Finalize user setup
         user.setEnabled(true);
         context.setUser(user);
-
-        context.getAuthenticationSession().setClientNote(OIDCLoginProtocol.LOGIN_HINT_PARAM, username);
-        //AttributeFormDataProcessor.process(formData);
-
         context.getEvent().user(user);
         context.getEvent().success();
+        context.getAuthenticationSession().setClientNote(OIDCLoginProtocol.LOGIN_HINT_PARAM, user.getUsername());
         context.newEvent().event(EventType.LOGIN);
         context.getEvent().client(context.getAuthenticationSession().getClient().getClientId())
                 .detail(Details.REDIRECT_URI, context.getAuthenticationSession().getRedirectUri())
@@ -329,6 +186,140 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         if (authType != null) {
             context.getEvent().detail(Details.AUTH_TYPE, authType);
         }
+    }
+
+
+    // Methods for phone and email validation
+    private void validatePhoneRegistration(ValidationContext context, MultivaluedMap<String, String> formData, String phoneNumber, List<FormMessage> errors) {
+        KeycloakSession session = context.getSession();
+        if (Validation.isBlank(phoneNumber)) {
+            errors.add(new FormMessage(FIELD_PHONE_NUMBER, SupportPhonePages.Errors.MISSING.message()));
+            context.error(Errors.INVALID_REGISTRATION);
+            context.validationError(formData, errors);
+        } else {
+            try {
+                phoneNumber = Utils.canonicalizePhoneNumber(session, phoneNumber);
+                if (!Utils.isDuplicatePhoneAllowed(session) &&
+                        Utils.findUserByPhone(session, context.getRealm(), phoneNumber).isPresent()) {
+                    context.error(Errors.INVALID_REGISTRATION);
+                    errors.add(new FormMessage(FIELD_PHONE_NUMBER, SupportPhonePages.Errors.EXISTS.message()));
+                    context.validationError(formData, errors);
+                }
+
+            } catch (PhoneNumberInvalidException e) {
+                context.error(Errors.INVALID_REGISTRATION);
+                errors.add(new FormMessage(FIELD_PHONE_NUMBER, e.getErrorType().message()));
+                context.validationError(formData, errors);
+            }
+        }
+
+        String verificationCode = formData.getFirst(PhoneConstants.FIELD_VERIFICATION_CODE);
+        TokenCodeRepresentation tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess(phoneNumber, TokenCodeType.REGISTRATION);
+
+        if (Validation.isBlank(verificationCode) || tokenCode == null ||
+                !tokenCode.getCode().equals(verificationCode)) {
+            context.error(Errors.INVALID_CODE);
+            context.getEvent().detail(PhoneConstants.FIELD_PHONE_NUMBER, phoneNumber);
+            errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
+            context.validationError(formData, errors);
+        }
+
+        if (tokenCode != null) {
+            context.getSession().setAttribute(PhoneConstants.FIELD_TOKEN_ID, tokenCode.getId());
+        }
+
+        formData.remove(FIELD_EMAIL);
+        context.getEvent().detail(FIELD_PHONE_NUMBER, phoneNumber);
+        context.getEvent().detail(Details.USERNAME, phoneNumber);
+        formData.putSingle(UserModel.USERNAME, phoneNumber);
+
+        UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
+        UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
+
+        String username = profile.getAttributes().getFirstValue(UserModel.USERNAME);
+        context.getEvent().detail(Details.USERNAME, username);
+
+        try {
+            profile.validate();
+        } catch (ValidationException pve) {
+            triggerContextError(context, errors, pve);
+        }
+    }
+
+    private void validateEmailRegistration(ValidationContext context, MultivaluedMap<String, String> formData, String email, List<FormMessage> errors) {
+        KeycloakSession session = context.getSession();
+
+        if (Validation.isBlank(email)) {
+            errors.add(new FormMessage(FIELD_EMAIL, Messages.MISSING_EMAIL));
+        }
+        formData.remove(PhoneConstants.FIELD_AREA_CODE);
+        formData.remove(PhoneConstants.FIELD_PHONE_NUMBER);
+        boolean emailValid = true;
+
+        if (Validation.isBlank(email)) {
+            errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.MISSING_EMAIL));
+            emailValid = false;
+        } else if (!Validation.isEmailValid(email)) {
+            context.getEvent().detail(Details.EMAIL, email);
+            errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.INVALID_EMAIL));
+            emailValid = false;
+        }
+
+        if (emailValid && !context.getRealm().isDuplicateEmailsAllowed()) {
+            boolean duplicateEmail = false;
+            try {
+                if (session.users().getUserByEmail(context.getRealm(), email) != null) {
+                    duplicateEmail = true;
+                }
+            } catch (ModelDuplicateException e) {
+                duplicateEmail = true;
+            }
+            if (duplicateEmail) {
+                formData.remove(Validation.FIELD_EMAIL);
+                context.getEvent().detail(Details.EMAIL, email);
+                errors.add(new FormMessage(RegistrationPage.FIELD_EMAIL, Messages.EMAIL_EXISTS));
+            }
+        }
+
+        if (Validation.isBlank(formData.getFirst(RegistrationPage.FIELD_PASSWORD))) {
+            errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD, Messages.MISSING_PASSWORD));
+        } else if (!formData.getFirst(RegistrationPage.FIELD_PASSWORD).equals(formData.getFirst(RegistrationPage.FIELD_PASSWORD_CONFIRM))) {
+            errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD_CONFIRM, Messages.INVALID_PASSWORD_CONFIRM));
+        }
+
+        if (formData.getFirst(RegistrationPage.FIELD_PASSWORD) != null) {
+            PolicyError err = context.getSession().getProvider(PasswordPolicyManagerProvider.class).validate(context.getRealm().isRegistrationEmailAsUsername() ? formData.getFirst(RegistrationPage.FIELD_EMAIL) : formData.getFirst(RegistrationPage.FIELD_USERNAME), formData.getFirst(RegistrationPage.FIELD_PASSWORD));
+            if (err != null) {
+                errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD, err.getMessage(), err.getParameters()));
+            }
+        }
+
+        context.getEvent().detail(Details.EMAIL, email);
+        context.getEvent().detail(Details.USERNAME, email);
+        formData.putSingle(UserModel.USERNAME, email);
+
+        UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
+        UserProfile profile = profileProvider.create(UserProfileContext.REGISTRATION_USER_CREATION, formData);
+
+        String username = profile.getAttributes().getFirstValue(UserModel.USERNAME);
+        context.getEvent().detail(Details.USERNAME, username);
+
+        try {
+            profile.validate();
+        } catch (ValidationException pve) {
+            triggerContextError(context, errors, pve);
+        }
+    }
+
+    private void triggerContextError(ValidationContext context, List<FormMessage> errors, ValidationException pve) {
+        if (pve.hasError(Messages.EMAIL_EXISTS)) {
+            context.error(Errors.EMAIL_IN_USE);
+        } else if (pve.hasError(Messages.MISSING_EMAIL, Messages.MISSING_USERNAME, Messages.INVALID_EMAIL)) {
+            context.error(Errors.INVALID_REGISTRATION);
+        } else if (pve.hasError(Messages.USERNAME_EXISTS)) {
+            context.error(Errors.USERNAME_IN_USE);
+        }
+        errors.addAll(Validation.getFormErrorsFromValidation(pve.getErrors()));
     }
 
     @Override
