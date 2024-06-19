@@ -28,6 +28,11 @@ public class SmsResource {
         return new TokenCodeResource(session, TokenCodeType.REGISTRATION);
     }
 
+    @Path("registration-email-code")
+    public EmailTokenCodeResource getRegistrationEmailCodeResource() {
+        return new EmailTokenCodeResource(session, TokenCodeType.VERIFY);
+    }
+
     @Path("reset-code")
     public TokenCodeResource getResetCodeResource() {
         return new TokenCodeResource(session, TokenCodeType.RESET);

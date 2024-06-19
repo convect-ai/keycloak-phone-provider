@@ -43,6 +43,16 @@
                     <input type="password" id="password-confirm" name="password-confirm" class="form-control"
                            placeholder="确认密码" />
                 </div>
+                <div class="form-group">
+                    <label for="emailCode">验证码</label>
+                    <div class="input-group">
+                        <input type="text" id="emailCode" name="emailCode" class="form-control"
+                               placeholder="验证码" />
+                        <div class="input-group-append">
+                            <button type="button" class="btn btn-primary" id="getVerificationCode">获取验证码</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             <button type="submit" class="btn btn-primary btn-block">注册</button>
         </form>
@@ -52,8 +62,10 @@
 <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
 <script>
+  let globalCredentialType;
   document.getElementById('credentialType').addEventListener('change', function () {
-    var credentialType = this.value;
+    let credentialType = this.value;
+    globalCredentialType = credentialType;
     if (credentialType === 'phone') {
       document.getElementById('phone-fields').style.display = 'block';
       document.getElementById('email-fields').style.display = 'none';
@@ -67,13 +79,20 @@
   });
 
   document.getElementById('getVerificationCode').addEventListener('click', function () {
-    var areaCode = document.getElementById('areaCode').value;
-    var phoneNumber = document.getElementById('phoneNumber').value;
-    if (!areaCode || !phoneNumber) {
-      alert('请输入区号和手机号');
-      return;
+    if (globalCredentialType === 'phone') {
+      let areaCode = document.getElementById('areaCode').value;
+      let phoneNumber = document.getElementById('phoneNumber').value;
+      if (!areaCode || !phoneNumber) {
+        alert('请输入区号和手机号');
+        return;
+      }
+    } else if (globalCredentialType === 'email') {
+      let email = document.getElementById('email').value;
+      if (!email) {
+        alert('请输入邮箱');
+        return;
+      }
     }
-    // 调用发送验证码的 API，需要实现相应的服务端逻辑
     sendVerificationCode();
   });
 
@@ -84,41 +103,54 @@
       .catch(e => app.errorMessage = e.response.data.error);
   }
 
+  function reqEmailVerificationCode(email) {
+    const params = { params: { email } }
+    axios.get(window.location.origin + '/realms/${realm.name}/sms/registration-email-code', params)
+      .then(res => app.disableSend(res.data.expires_in))
+      .catch(e => app.errorMessage = e.response.data.error);
+  }
+
   function sendVerificationCode() {
-    var phoneNumber = document.getElementById('phoneNumber').value;
+
+    if (globalCredentialType === 'phone') {
+      var areaCode = document.getElementById('areaCode').value;
+      var phoneNumber = document.getElementById('phoneNumber').value;
+      req(areaCode + phoneNumber);
+    } else if (globalCredentialType === 'email') {
+      var email = document.getElementById('email').value;
+      reqEmailVerificationCode(email);
+    }
 
     var verificationCodeBtn = document.getElementById('getVerificationCode');
 
     verificationCodeBtn.disabled = true;  // Disable button to prevent multiple requests
+  }
 
-    req(phoneNumber);
-
-    function checkForm() {
-      var credentialType = document.getElementById('credentialType').value;
-      if (credentialType === 'phone') {
-        var phoneNumber = document.getElementById('phoneNumber').value;
-        var verificationCode = document.getElementById('smsCode').value;
-        if (!phoneNumber || !verificationCode) {
-          alert('请输入手机号和验证码');
-          return false;
-        }
-      } else if (credentialType === 'email') {
-        var email = document.getElementById('email').value;
-        var password = document.getElementById('password').value;
-        var passwordConfirm = document.getElementById('password-confirm').value;
-        if (!email || !password || !passwordConfirm) {
-          alert('请输入邮箱和密码');
-          return false;
-        }
-        if (password !== passwordConfirm) {
-          alert('密码和确认密码不一致');
-          return false;
-        }
-      } else {
-        alert('请选择注册方式');
+  function checkForm() {
+    var credentialType = document.getElementById('credentialType').value;
+    if (credentialType === 'phone') {
+      var phoneNumber = document.getElementById('phoneNumber').value;
+      var verificationCode = document.getElementById('smsCode').value;
+      if (!phoneNumber || !verificationCode) {
+        alert('请输入手机号和验证码');
         return false;
       }
-      return true;
+    } else if (credentialType === 'email') {
+      var email = document.getElementById('email').value;
+      var password = document.getElementById('password').value;
+      var passwordConfirm = document.getElementById('password-confirm').value;
+      if (!email || !password || !passwordConfirm) {
+        alert('请输入邮箱和密码');
+        return false;
+      }
+      if (password !== passwordConfirm) {
+        alert('密码和确认密码不一致');
+        return false;
+      }
+    } else {
+      alert('请选择注册方式');
+      return false;
     }
+    return true;
   }
 </script>

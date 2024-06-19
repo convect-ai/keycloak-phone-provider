@@ -5,6 +5,7 @@ import cc.coopersoft.keycloak.phone.providers.constants.PhoneConstants;
 import cc.coopersoft.keycloak.phone.providers.constants.TokenCodeType;
 import cc.coopersoft.keycloak.phone.providers.exception.PhoneNumberInvalidException;
 import cc.coopersoft.keycloak.phone.providers.representations.TokenCodeRepresentation;
+import cc.coopersoft.keycloak.phone.providers.spi.EmailVerificationCodeProvider;
 import cc.coopersoft.keycloak.phone.providers.spi.PhoneVerificationCodeProvider;
 import org.keycloak.Config;
 import org.keycloak.authentication.FormAction;
@@ -52,12 +53,11 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
     static {
         CONFIG_PROPERTIES = ProviderConfigurationBuilder.create()
                 .property()
-                .name("registrationMethod")
-                .type(ProviderConfigProperty.LIST_TYPE)
-                .options("Email", "Phone")
-                .label("Registration Method")
-                .helpText("Choose whether to use email or phone number as the username.")
-                .defaultValue("Phone")
+                .name("verifyEmailImmediately")
+                .type(ProviderConfigProperty.BOOLEAN_TYPE)
+                .label("Verify Email Immediately")
+                .helpText("Enable to require immediate email verification during registration.")
+                .defaultValue("true")
                 .add()
                 .build();
     }
@@ -168,6 +168,17 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
 
             user = profile.create(); // Create the user with the email as username
             context.getSession().setAttribute(UserModel.EMAIL, email);
+
+            // if not verify email immediately, set requiredActions to VERIFY_EMAIL
+            if (!Boolean.parseBoolean(context.getAuthenticatorConfig().getConfig().get("verifyEmailImmediately"))) {
+                // check if VerifyEmailByCode required action is already set
+                if (Utils.isVerifyEmailByCodeRegistered(context.getSession())) {
+                    user.addRequiredAction("VERIFY_EMAIL_CODE");
+                } else {
+                    user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
+                }
+            }
+
         } else {
             throw new IllegalStateException("Invalid registration method.");
         }
@@ -248,6 +259,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
 
     private void validateEmailRegistration(ValidationContext context, MultivaluedMap<String, String> formData, String email, List<FormMessage> errors) {
         KeycloakSession session = context.getSession();
+        boolean verifyEmailImmediately = Boolean.parseBoolean(context.getAuthenticatorConfig().getConfig().get("verifyEmailImmediately"));
 
         if (Validation.isBlank(email)) {
             errors.add(new FormMessage(FIELD_EMAIL, Messages.MISSING_EMAIL));
@@ -291,6 +303,23 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
             PolicyError err = context.getSession().getProvider(PasswordPolicyManagerProvider.class).validate(context.getRealm().isRegistrationEmailAsUsername() ? formData.getFirst(RegistrationPage.FIELD_EMAIL) : formData.getFirst(RegistrationPage.FIELD_USERNAME), formData.getFirst(RegistrationPage.FIELD_PASSWORD));
             if (err != null) {
                 errors.add(new FormMessage(RegistrationPage.FIELD_PASSWORD, err.getMessage(), err.getParameters()));
+            }
+        }
+
+        if (verifyEmailImmediately) {
+            String verificationCode = formData.getFirst(PhoneConstants.FIELD_VERIFICATION_CODE);
+            TokenCodeRepresentation tokenCode = session.getProvider(EmailVerificationCodeProvider.class).ongoingProcess(email, TokenCodeType.REGISTRATION);
+
+            if (Validation.isBlank(verificationCode) || tokenCode == null ||
+                    !tokenCode.getCode().equals(verificationCode)) {
+                context.error(Errors.INVALID_CODE);
+                context.getEvent().detail(FIELD_EMAIL, email);
+                errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
+                context.validationError(formData, errors);
+            }
+
+            if (tokenCode != null) {
+                context.getSession().setAttribute(PhoneConstants.FIELD_TOKEN_ID, tokenCode.getId());
             }
         }
 
