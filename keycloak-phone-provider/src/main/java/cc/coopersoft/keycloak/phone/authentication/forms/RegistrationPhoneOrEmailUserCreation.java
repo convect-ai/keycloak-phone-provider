@@ -5,8 +5,10 @@ import cc.coopersoft.keycloak.phone.providers.constants.PhoneConstants;
 import cc.coopersoft.keycloak.phone.providers.constants.TokenCodeType;
 import cc.coopersoft.keycloak.phone.providers.exception.PhoneNumberInvalidException;
 import cc.coopersoft.keycloak.phone.providers.representations.TokenCodeRepresentation;
+import cc.coopersoft.keycloak.phone.providers.rest.TokenCodeResource;
 import cc.coopersoft.keycloak.phone.providers.spi.EmailVerificationCodeProvider;
 import cc.coopersoft.keycloak.phone.providers.spi.PhoneVerificationCodeProvider;
+import org.jboss.logging.Logger;
 import org.keycloak.Config;
 import org.keycloak.authentication.FormAction;
 import org.keycloak.authentication.FormActionFactory;
@@ -40,8 +42,11 @@ import static cc.coopersoft.keycloak.phone.providers.constants.PhoneConstants.FI
 
 public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, FormAction {
 
+    private static final Logger logger = Logger.getLogger(RegistrationPhoneOrEmailUserCreation.class);
+
     public static final String PROVIDER_ID = "registration-phone-email-creation";
     public static final String MISSING_PHONE_NUMBER_OR_EMAIL = "requiredPhoneNumberOrEmail";
+    public static final String VERIFY_EMAIL_IMMEDIATELY = "verifyEmailImmediately";
 
     private static final AuthenticationExecutionModel.Requirement[] REQUIREMENT_CHOICES = {
             AuthenticationExecutionModel.Requirement.REQUIRED,
@@ -53,11 +58,11 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
     static {
         CONFIG_PROPERTIES = ProviderConfigurationBuilder.create()
                 .property()
-                .name("verifyEmailImmediately")
+                .name(VERIFY_EMAIL_IMMEDIATELY)
                 .type(ProviderConfigProperty.BOOLEAN_TYPE)
                 .label("Verify Email Immediately")
                 .helpText("Enable to require immediate email verification during registration.")
-                .defaultValue("true")
+                .defaultValue(true)
                 .add()
                 .build();
     }
@@ -127,11 +132,14 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         }
 
         if (!errors.isEmpty() || !success) {
+            logger.info("RegistrationPhoneOrEmailUserCreation: error");
+            errors.forEach(error -> logger.info("Error: " + error.getMessage()));
             context.error(Errors.INVALID_REGISTRATION);
             formData.remove(RegistrationPage.FIELD_PASSWORD);
             formData.remove(RegistrationPage.FIELD_PASSWORD_CONFIRM);
             context.validationError(formData, errors);
         } else {
+            logger.info("RegistrationPhoneOrEmailUserCreation: success");
             context.success();
         }
     }
@@ -158,6 +166,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
                     .detail(Details.REGISTER_METHOD, "phone");
 
             user = profile.create(); // Create the user with the phone number as username
+            user.setSingleAttribute(PhoneConstants.FIELD_PHONE_NUMBER, phoneNumber);
             context.getSession().setAttribute(PhoneConstants.FIELD_PHONE_NUMBER, phoneNumber);
         } else if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_EMAIL)) {
             String email = formData.getFirst(FIELD_EMAIL);
@@ -177,6 +186,14 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
                 } else {
                     user.addRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL);
                 }
+            } else {
+                user.setEmailVerified(true);
+            }
+
+            try {
+                user.credentialManager().updateCredential(UserCredentialModel.password(formData.getFirst("password"), false));
+            } catch (Exception me) {
+                user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
             }
 
         } else {
@@ -225,8 +242,13 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         }
 
         String verificationCode = formData.getFirst(PhoneConstants.FIELD_VERIFICATION_CODE);
-        TokenCodeRepresentation tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess(phoneNumber, TokenCodeType.REGISTRATION);
-
+        logger.info(PhoneConstants.FIELD_VERIFICATION_CODE + ": " + verificationCode);
+        TokenCodeRepresentation tokenCode;
+        tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess(phoneNumber, TokenCodeType.REGISTRATION);
+        if (tokenCode == null) {
+            tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess("+86" + phoneNumber, TokenCodeType.REGISTRATION);
+        }
+        logger.info(tokenCode.getCode());
         if (Validation.isBlank(verificationCode) || tokenCode == null ||
                 !tokenCode.getCode().equals(verificationCode)) {
             context.error(Errors.INVALID_CODE);
@@ -253,13 +275,16 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         try {
             profile.validate();
         } catch (ValidationException pve) {
+            pve.getErrors().forEach(error -> {
+                logger.info("Validation error: " + error.getMessage());
+            });
             triggerContextError(context, errors, pve);
         }
     }
 
     private void validateEmailRegistration(ValidationContext context, MultivaluedMap<String, String> formData, String email, List<FormMessage> errors) {
         KeycloakSession session = context.getSession();
-        boolean verifyEmailImmediately = Boolean.parseBoolean(context.getAuthenticatorConfig().getConfig().get("verifyEmailImmediately"));
+        boolean verifyEmailImmediately = isVerifyEmailImmediately(context);
 
         if (Validation.isBlank(email)) {
             errors.add(new FormMessage(FIELD_EMAIL, Messages.MISSING_EMAIL));
@@ -307,17 +332,22 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         }
 
         if (verifyEmailImmediately) {
-            String verificationCode = formData.getFirst(PhoneConstants.FIELD_VERIFICATION_CODE);
+            String verificationCode = formData.getFirst(PhoneConstants.FIELD_EMAIL_VERIFICATION_CODE);
+            logger.info(PhoneConstants.FIELD_EMAIL_VERIFICATION_CODE + ": " + verificationCode);
             TokenCodeRepresentation tokenCode = session.getProvider(EmailVerificationCodeProvider.class).ongoingProcess(email, TokenCodeType.REGISTRATION);
-
+            if (tokenCode == null) {
+                logger.info("Token code is null");
+            } else {
+                logger.info(tokenCode.getCode());
+            }
             if (Validation.isBlank(verificationCode) || tokenCode == null ||
                     !tokenCode.getCode().equals(verificationCode)) {
                 context.error(Errors.INVALID_CODE);
                 context.getEvent().detail(FIELD_EMAIL, email);
-                errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
+                errors.add(new FormMessage(PhoneConstants.FIELD_EMAIL_VERIFICATION_CODE, PhoneConstants.VERIFICATION_CODE_MISMATCH));
                 context.validationError(formData, errors);
             }
-
+            // set email verified to true
             if (tokenCode != null) {
                 context.getSession().setAttribute(PhoneConstants.FIELD_TOKEN_ID, tokenCode.getId());
             }
@@ -336,6 +366,9 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         try {
             profile.validate();
         } catch (ValidationException pve) {
+            pve.getErrors().forEach(error -> {
+                logger.info("Validation error: " + error.getMessage());
+            });
             triggerContextError(context, errors, pve);
         }
     }
@@ -399,6 +432,19 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
     @Override
     public List<ProviderConfigProperty> getConfigProperties() {
         return CONFIG_PROPERTIES;
+    }
+
+    private boolean isVerifyEmailImmediately(FormContext context) {
+        try {
+            if (context.getAuthenticatorConfig() == null) {
+                return true;
+            } else {
+                return "true".equalsIgnoreCase(context.getAuthenticatorConfig().getConfig()
+                        .getOrDefault(VERIFY_EMAIL_IMMEDIATELY, "true"));
+            }
+        } catch (Exception e) {
+            return true;
+        }
     }
 
 }

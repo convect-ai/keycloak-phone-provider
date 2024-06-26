@@ -36,21 +36,19 @@ public class AliyunSmsSenderServiceProvider implements MessageSenderService {
   @Override
   public void sendSmsMessage(TokenCodeType type, String phoneNumber, String code, int expires, String kind) throws MessageSendException {
 
-    String kindName = OptionalUtils.ofBlank(kind).orElse(type.name().toLowerCase());
-    String templateId = Optional.ofNullable(config.get(realm.getName().toLowerCase() + "-" + kindName + "-template"))
-        .orElse(config.get(kindName + "-template"));
+    String templateId = "SMS_246660327";
 
     CommonRequest request = new CommonRequest();
     request.setSysMethod(MethodType.POST);
     request.setSysDomain("dysmsapi.aliyuncs.com");
     request.setSysVersion("2017-05-25");
     request.setSysAction("SendSms");
-    request.putQueryParameter("RegionId", config.get("region"));
+    request.putQueryParameter("RegionId", "cn-hangzhou");
     request.putQueryParameter("PhoneNumbers", phoneNumber);
     request.putQueryParameter("SignName", realm.getDisplayName().toLowerCase());
     request.putQueryParameter("TemplateCode", templateId);
 
-    request.putQueryParameter("TemplateParam", String.format("{\"code\":\"%s\",\"expires\":\"%s\"}",code,expires / 60));
+    request.putQueryParameter("TemplateParam", String.format("{\"code\":\"%s\"}", code));
     try {
       CommonResponse response = client.getCommonResponse(request);
       logger.debug(response.getData());

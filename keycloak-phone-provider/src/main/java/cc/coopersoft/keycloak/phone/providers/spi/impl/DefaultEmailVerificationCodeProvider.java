@@ -87,8 +87,7 @@ public class DefaultEmailVerificationCodeProvider implements EmailVerificationCo
                     .setParameter("date", oneHourAgo, TemporalType.TIMESTAMP)
                     .setParameter("type", tokenCodeType.name())
                     .getSingleResult());
-            if (targetCount > targetHourMaximum)
-                return true;
+            return targetCount > targetHourMaximum;
         }
 
         if (sourceHourMaximum > 0) {
@@ -99,8 +98,7 @@ public class DefaultEmailVerificationCodeProvider implements EmailVerificationCo
                     .setParameter("date", oneHourAgo, TemporalType.TIMESTAMP)
                     .setParameter("type", tokenCodeType.name())
                     .getSingleResult());
-            if (sourceCount > sourceHourMaximum)
-                return true;
+            return sourceCount > sourceHourMaximum;
         }
 
         return false;

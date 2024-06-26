@@ -8,6 +8,7 @@ public class PhoneConstants {
     public static final String LEGACY_FIELD_AREA_CODE = "area_code";
     public static final String LEGACY_FIELD_PHONE_NUMBER = "phone_number";
     public static final String FIELD_VERIFICATION_CODE = "smsCode";
+    public static final String FIELD_EMAIL_VERIFICATION_CODE = "emailCode";
     public static final String FIELD_EMAIL = RegistrationPage.FIELD_EMAIL;
     public static final String FIELD_TOKEN_ID = "tokenId";
     public static final String FIELD_CREDENTIAL_TYPE = "credentialType";

@@ -30,7 +30,7 @@ public class SmsResource {
 
     @Path("registration-email-code")
     public EmailTokenCodeResource getRegistrationEmailCodeResource() {
-        return new EmailTokenCodeResource(session, TokenCodeType.VERIFY);
+        return new EmailTokenCodeResource(session, TokenCodeType.REGISTRATION);
     }
 
     @Path("reset-code")
