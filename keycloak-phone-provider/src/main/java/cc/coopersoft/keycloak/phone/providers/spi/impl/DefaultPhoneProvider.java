@@ -48,7 +48,7 @@ public class DefaultPhoneProvider implements PhoneProvider {
             logger.warn("No message sender service provider specified! Default provider'" +
                 this.service + "' will be used. You can use keycloak start param '--spi-phone-default-service' to specify a different one. ");
 
-        this.tokenExpiresIn = config.getInt("tokenExpiresIn", 60);
+        this.tokenExpiresIn = config.getInt("tokenExpiresIn", 600);
         this.targetHourMaximum = config.getInt("targetHourMaximum",3);
         this.sourceHourMaximum = config.getInt("sourceHourMaximum", 10);
     }
