@@ -1,17 +1,16 @@
 package cc.coopersoft.keycloak.phone.providers.spi.impl;
 
 import cc.coopersoft.common.OptionalUtils;
-import cc.coopersoft.keycloak.phone.providers.representations.SendCodeResult;
-import cc.coopersoft.keycloak.phone.providers.spi.PhoneProvider;
-import cc.coopersoft.keycloak.phone.providers.spi.PhoneVerificationCodeProvider;
 import cc.coopersoft.keycloak.phone.providers.constants.TokenCodeType;
 import cc.coopersoft.keycloak.phone.providers.exception.MessageSendException;
+import cc.coopersoft.keycloak.phone.providers.representations.SendCodeResult;
 import cc.coopersoft.keycloak.phone.providers.representations.TokenCodeRepresentation;
 import cc.coopersoft.keycloak.phone.providers.spi.MessageSenderService;
+import cc.coopersoft.keycloak.phone.providers.spi.PhoneProvider;
+import cc.coopersoft.keycloak.phone.providers.spi.PhoneVerificationCodeProvider;
 import org.jboss.logging.Logger;
 import org.keycloak.Config.Scope;
 import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.services.validation.Validation;
 import org.slf4j.LoggerFactory;
 
@@ -138,56 +137,60 @@ public class DefaultPhoneProvider implements PhoneProvider {
                 int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + tokenResendIn * 1000 - Instant.now().toEpochMilli());
                 return new SendCodeResult(expiresAt, nextResendIn, false);
             } else {
-                // Create an ongoing process, which holds the same code as the previous one
-                int expiresIn = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
-                // Make sure that expiresIn is at least tokenResendIn
-                if (expiresIn < tokenResendIn) {
-                    expiresIn = tokenResendIn;
-                }
-                try {
-                    session.getProvider(MessageSenderService.class, service).sendSmsMessage(type, phoneNumber, ongoing.getCode(),tokenExpiresIn, kind);
-                    // make the old process expired
-                    getTokenCodeService().deprecateCode(ongoing);
-                    TokenCodeRepresentation ongoingNew = ongoing.clone();
-                    getTokenCodeService().persistCode(ongoingNew, type, expiresIn);
-
-                } catch (MessageSendException e) {
-                    logger.error(String.format("Message sending to %s failed with %s: %s",
-                            phoneNumber, e.getErrorCode(), e.getErrorMessage()));
-
-                    if (e.getErrorCode().equals("isv.BUSINESS_LIMIT_CONTROL")) {
-                        throw new ForbiddenException("You requested the maximum number of messages the last hour");
-                    }
-
-                    throw new ServiceUnavailableException("Internal server error");
-                } catch (Exception e) {
-                    logger.error(String.format("Message sending to %s failed with %s: %s",
-                            phoneNumber, e.getClass().getName(), e.getMessage()));
-                    logger.error(String.format("我靠，啥问题啊, %s", e.getClass().getName()));
-                    logger.error(String.format("我靠，啥问题啊, %s", e.getMessage()));
-                    throw new ServiceUnavailableException("Internal server error");
-                }
-
-                return new SendCodeResult(expiresIn, tokenResendIn, true);
+                return handleOngoingProcess(ongoing, phoneNumber, type, kind);
             }
+        } else {
+            return sendNewToken(phoneNumber, type, kind);
         }
+    }
 
+    private SendCodeResult handleOngoingProcess(TokenCodeRepresentation ongoing, String phoneNumber, TokenCodeType type, String kind) {
+        int expiresIn = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+        if (expiresIn < tokenResendIn) {
+            expiresIn = tokenResendIn;
+        }
+        try {
+            session.getProvider(MessageSenderService.class, service).sendSmsMessage(type, phoneNumber, ongoing.getCode(), tokenExpiresIn, kind);
+            getTokenCodeService().deprecateCode(ongoing);
+            TokenCodeRepresentation ongoingNew = ongoing.clone();
+            getTokenCodeService().persistCode(ongoingNew, type, expiresIn);
+            return new SendCodeResult(expiresIn, tokenResendIn, true);
+        } catch (MessageSendException e) {
+            handleSendException(e, phoneNumber);
+            return null;
+        } catch (Exception e) {
+            handleGeneralException(e, phoneNumber);
+            return null;
+        }
+    }
+
+    private SendCodeResult sendNewToken(String phoneNumber, TokenCodeType type, String kind) {
         TokenCodeRepresentation token = TokenCodeRepresentation.forPhoneNumber(phoneNumber);
-
         try {
             session.getProvider(MessageSenderService.class, service).sendSmsMessage(type, phoneNumber, token.getCode(), tokenExpiresIn, kind);
             getTokenCodeService().persistCode(token, type, tokenExpiresIn);
-
             logger.info(String.format("Sent %s code to %s over %s", type.label, phoneNumber, service));
-
+            return new SendCodeResult(tokenExpiresIn, tokenResendIn, true);
         } catch (MessageSendException e) {
-
-            logger.error(String.format("Message sending to %s failed with %s: %s",
-                    phoneNumber, e.getErrorCode(), e.getErrorMessage()));
-            throw new ServiceUnavailableException("Internal server error");
+            handleSendException(e, phoneNumber);
+            return null;
+        } catch (Exception e) {
+            handleGeneralException(e, phoneNumber);
+            return null;
         }
+    }
 
-        return new SendCodeResult(tokenExpiresIn, tokenResendIn, true);
+    private void handleSendException(MessageSendException e, String phoneNumber) {
+        logger.error(String.format("Message sending to %s failed with %s: %s", phoneNumber, e.getErrorCode(), e.getErrorMessage()));
+        if (e.getErrorCode().equals("isv.BUSINESS_LIMIT_CONTROL")) {
+            throw new ForbiddenException("You requested the maximum number of messages the last hour");
+        }
+        throw new ServiceUnavailableException("Internal server error");
+    }
+
+    private void handleGeneralException(Exception e, String phoneNumber) {
+        logger.error(String.format("Message sending to %s failed with %s: %s", phoneNumber, e.getClass().getName(), e.getMessage()));
+        throw new ServiceUnavailableException("Internal server error");
     }
 
 }

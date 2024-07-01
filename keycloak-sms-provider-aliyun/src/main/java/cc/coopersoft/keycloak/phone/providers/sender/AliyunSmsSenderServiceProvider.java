@@ -11,10 +11,12 @@ import com.aliyuncs.IAcsClient;
 import com.aliyuncs.exceptions.ClientException;
 import com.aliyuncs.http.MethodType;
 import com.aliyuncs.profile.DefaultProfile;
+import com.google.gson.Gson;
 import org.jboss.logging.Logger;
 import org.keycloak.Config;
 import org.keycloak.models.RealmModel;
 
+import java.util.Map;
 import java.util.Optional;
 
 public class AliyunSmsSenderServiceProvider implements MessageSenderService {
@@ -55,12 +57,19 @@ public class AliyunSmsSenderServiceProvider implements MessageSenderService {
         request.putQueryParameter("SignName", config.get("sign"));
         request.putQueryParameter("TemplateCode", templateId);
 
-//    request.putQueryParameter("TemplateParam", String.format("{\"code\":\"%s\",\"expires\":\"%s\"}",code,expires / 60));
         request.putQueryParameter("TemplateParam", String.format("{\"code\":\"%s\"}", code));
         try {
             CommonResponse response = client.getCommonResponse(request);
             System.out.println("短信发送结果: " + response.getHttpResponse().getHttpContentString());
-            logger.debug(response.getData());
+            logger.info("Data: " + response.getData());
+            logger.info("Status: " + response.getHttpResponse().getStatus());
+            logger.info("ReasonPhrase" + response.getHttpResponse().getReasonPhrase());
+            // convert to JSON object
+            Gson gson = new Gson();
+            Map<?, ?> responseJson = gson.fromJson(response.getHttpResponse().getHttpContentString(), Map.class);
+            if (!"OK".equals(responseJson.get("Code"))) {
+                throw new MessageSendException(500, responseJson.get("Code").toString(), responseJson.get("Message").toString());
+            }
         } catch (ClientException e) {
             throw new MessageSendException(500, e.getErrCode(), e.getMessage());
         }
