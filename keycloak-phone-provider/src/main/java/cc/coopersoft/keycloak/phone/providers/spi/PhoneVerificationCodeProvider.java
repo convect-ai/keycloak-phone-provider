@@ -7,6 +7,8 @@ import org.keycloak.provider.Provider;
 
 public interface PhoneVerificationCodeProvider extends Provider {
 
+    void deprecateCode(TokenCodeRepresentation tokenCode);
+
     TokenCodeRepresentation ongoingProcess(String phoneNumber, TokenCodeType tokenCodeType);
 
     boolean isAbusing(String phoneNumber, TokenCodeType tokenCodeType,String sourceAddr ,int sourceHourMaximum,int targetHourMaximum);

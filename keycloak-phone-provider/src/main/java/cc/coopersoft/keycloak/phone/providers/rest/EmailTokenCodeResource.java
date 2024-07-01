@@ -3,6 +3,7 @@ package cc.coopersoft.keycloak.phone.providers.rest;
 import cc.coopersoft.keycloak.phone.Utils;
 import cc.coopersoft.keycloak.phone.providers.constants.TokenCodeType;
 import cc.coopersoft.keycloak.phone.providers.exception.MessageSendException;
+import cc.coopersoft.keycloak.phone.providers.representations.SendCodeResult;
 import cc.coopersoft.keycloak.phone.providers.representations.TokenCodeRepresentation;
 import cc.coopersoft.keycloak.phone.providers.spi.EmailVerificationCodeProvider;
 import org.jboss.logging.Logger;
@@ -50,9 +51,9 @@ public class EmailTokenCodeResource {
 
         logger.info(String.format("Requested %s code to %s", tokenCodeType.label, email));
 
-        int tokenExpiresIn = sendTokenCode(email, session.getContext().getConnection().getRemoteAddr(), tokenCodeType, kind);
+        SendCodeResult result = sendTokenCode(email, session.getContext().getConnection().getRemoteAddr(), tokenCodeType, kind);
 
-        String response = String.format("{\"expires_in\":%s}", tokenExpiresIn);
+        String response = String.format("{\"expires_in\":%s, \"allow_resend_in\":%s, \"sent\":%s}", result.getExpiresIn(), result.getNextResendIn(), result.isSent());
 
         return Response.ok(response, APPLICATION_JSON_TYPE).build();
     }
@@ -61,7 +62,7 @@ public class EmailTokenCodeResource {
         return session.getProvider(EmailVerificationCodeProvider.class);
     }
 
-    public int sendTokenCode(String email, String sourceAddr, TokenCodeType type, String kind) {
+    public SendCodeResult sendTokenCode(String email, String sourceAddr, TokenCodeType type, String kind) {
 
         logger.info("send code to: " + email);
 
@@ -70,9 +71,36 @@ public class EmailTokenCodeResource {
         }
 
         TokenCodeRepresentation ongoing = getTokenCodeService().ongoingProcess(email, type);
+
         if (ongoing != null) {
-            logger.info(String.format("No need of sending a new %s code for %s", type.label, email));
-            return (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+            long timeSinceLastSent = Instant.now().toEpochMilli() - ongoing.getCreatedAt().getTime();
+            if (timeSinceLastSent < 60 * 1000) {
+                logger.info(String.format("No need of sending a new %s code for %s", type.label, email));
+                int expiresAt = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+                int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + 60 * 1000 - Instant.now().toEpochMilli());
+                return new SendCodeResult(expiresAt, nextResendIn, false);
+            } else {
+                // Create an ongoing process, which holds the same code as the previous one
+                int expiresIn = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+                // Make sure that expiresIn is at least tokenResendIn
+                if (expiresIn < 60) {
+                    expiresIn = 60;
+                }
+                try {
+                    getTokenCodeService().sendEmailMessage(type, email, ongoing.getCode(), 600, kind);
+                    // make the old process expired
+                    getTokenCodeService().deprecateCode(ongoing);
+                    TokenCodeRepresentation ongoingNew = ongoing.clone();
+                    getTokenCodeService().persistCode(ongoingNew, type, expiresIn);
+
+                } catch (MessageSendException e) {
+                    logger.error(String.format("Message sending to %s failed with %s: %s",
+                            email, e.getErrorCode(), e.getErrorMessage()));
+                    throw new ServiceUnavailableException("Internal server error");
+                }
+
+                return new SendCodeResult(expiresIn, 60, true);
+            }
         }
 
         TokenCodeRepresentation token = TokenCodeRepresentation.forPhoneNumber(email);
@@ -89,7 +117,7 @@ public class EmailTokenCodeResource {
             throw new ServiceUnavailableException("Internal server error");
         }
 
-        return 600;
+        return new SendCodeResult(600, 60, true);
     }
 
 }

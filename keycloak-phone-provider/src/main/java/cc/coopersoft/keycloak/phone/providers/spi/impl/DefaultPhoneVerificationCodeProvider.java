@@ -52,6 +52,15 @@ public class DefaultPhoneVerificationCodeProvider implements PhoneVerificationCo
         return session.getContext().getRealm();
     }
 
+    public void deprecateCode(TokenCodeRepresentation tokenCode) {
+        EntityManager em = getEntityManager();
+        em.getTransaction().begin();
+        TokenCode entity = em.find(TokenCode.class, tokenCode.getId());
+        entity.setExpiresAt(Date.from(Instant.now()));
+        getEntityManager().merge(entity);
+        em.getTransaction().commit();
+    }
+
     @Override
     public TokenCodeRepresentation ongoingProcess(String phoneNumber, TokenCodeType tokenCodeType) {
 

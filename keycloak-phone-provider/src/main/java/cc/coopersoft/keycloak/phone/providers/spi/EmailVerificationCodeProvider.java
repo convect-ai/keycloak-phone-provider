@@ -10,6 +10,8 @@ public interface EmailVerificationCodeProvider extends Provider {
 
     TokenCodeRepresentation ongoingProcess(String email, TokenCodeType tokenCodeType);
 
+    void deprecateCode(TokenCodeRepresentation tokenCode);
+
     boolean isAbusing(String email, TokenCodeType tokenCodeType,String sourceAddr ,int sourceHourMaximum,int targetHourMaximum);
 
     void persistCode(TokenCodeRepresentation tokenCode, TokenCodeType tokenCodeType, int tokenExpiresIn);

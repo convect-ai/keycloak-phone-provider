@@ -43,7 +43,7 @@
     </createIndex>
 
   </changeSet>
-  
+
   <changeSet author="cooper" id="token-code-6.2">
     <modifyDataType
       columnName="BY_WHOM"
