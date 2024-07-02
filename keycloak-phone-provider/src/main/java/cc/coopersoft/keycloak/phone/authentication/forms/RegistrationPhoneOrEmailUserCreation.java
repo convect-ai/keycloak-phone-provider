@@ -5,7 +5,6 @@ import cc.coopersoft.keycloak.phone.providers.constants.PhoneConstants;
 import cc.coopersoft.keycloak.phone.providers.constants.TokenCodeType;
 import cc.coopersoft.keycloak.phone.providers.exception.PhoneNumberInvalidException;
 import cc.coopersoft.keycloak.phone.providers.representations.TokenCodeRepresentation;
-import cc.coopersoft.keycloak.phone.providers.rest.TokenCodeResource;
 import cc.coopersoft.keycloak.phone.providers.spi.EmailVerificationCodeProvider;
 import cc.coopersoft.keycloak.phone.providers.spi.PhoneVerificationCodeProvider;
 import org.jboss.logging.Logger;
@@ -37,6 +36,7 @@ import javax.ws.rs.core.MultivaluedMap;
 import java.util.ArrayList;
 import java.util.List;
 
+import static cc.coopersoft.keycloak.phone.authentication.forms.SupportPhonePages.ATTEMPTED_PHONE_ACTIVATED;
 import static cc.coopersoft.keycloak.phone.authentication.forms.SupportPhonePages.FIELD_PHONE_NUMBER;
 import static cc.coopersoft.keycloak.phone.providers.constants.PhoneConstants.FIELD_EMAIL;
 
@@ -94,7 +94,15 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
 
     @Override
     public void buildPage(FormContext context, LoginFormsProvider form) {
-
+        logger.info("Now, building page for RegistrationPhoneOrEmailUserCreation");
+        String credentialType = context.getSession().getAttribute(PhoneConstants.FIELD_CREDENTIAL_TYPE, String.class);
+        if (credentialType != null && credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_PHONE)) {
+            logger.info("Building page for phone registration");
+            form.setAttribute(ATTEMPTED_PHONE_ACTIVATED, true);
+        } else {
+            logger.info("Building page for email registration");
+            form.setAttribute(ATTEMPTED_PHONE_ACTIVATED, false);
+        }
     }
 
     @Override
@@ -105,6 +113,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         String phoneNumber = formData.getFirst(FIELD_PHONE_NUMBER);
         String email = formData.getFirst(FIELD_EMAIL);
         String credentialType = formData.getFirst(PhoneConstants.FIELD_CREDENTIAL_TYPE);
+        context.getSession().setAttribute(PhoneConstants.FIELD_CREDENTIAL_TYPE, credentialType);
         String firstName = formData.getFirst(UserModel.FIRST_NAME);
         String lastName = formData.getFirst(UserModel.LAST_NAME);
         boolean success = true;
@@ -179,7 +188,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
             context.getSession().setAttribute(UserModel.EMAIL, email);
 
             // if not verify email immediately, set requiredActions to VERIFY_EMAIL
-            if (!Boolean.parseBoolean(context.getAuthenticatorConfig().getConfig().get("verifyEmailImmediately"))) {
+            if (!isVerifyEmailImmediately(context)) {
                 // check if VerifyEmailByCode required action is already set
                 if (Utils.isVerifyEmailByCodeRegistered(context.getSession())) {
                     user.addRequiredAction("VERIFY_EMAIL_CODE");
@@ -201,6 +210,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         }
 
         // Finalize user setup
+        user.setSingleAttribute("company", formData.getFirst("company"));
         user.setEnabled(true);
         context.setUser(user);
         context.getEvent().user(user);
@@ -213,6 +223,18 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         String authType = context.getAuthenticationSession().getAuthNote(Details.AUTH_TYPE);
         if (authType != null) {
             context.getEvent().detail(Details.AUTH_TYPE, authType);
+        }
+        try {
+            String userId = user.getId();
+            if (credentialType.equals(PhoneConstants.CREDENTIAL_TYPE_PHONE)) {
+                String tokenCodeId = context.getSession().getAttribute(PhoneConstants.FIELD_TOKEN_ID, String.class);
+                context.getSession().getProvider(PhoneVerificationCodeProvider.class).validateProcess(tokenCodeId, context.getUser());
+            } else if (isVerifyEmailImmediately(context)) {
+                String tokenCodeId = context.getSession().getAttribute(PhoneConstants.FIELD_TOKEN_ID, String.class);
+                context.getSession().getProvider(EmailVerificationCodeProvider.class).validateProcess(tokenCodeId, context.getUser());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -248,7 +270,10 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         if (tokenCode == null) {
             tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess("+86" + phoneNumber, TokenCodeType.REGISTRATION);
         }
-        logger.info(tokenCode.getCode());
+        if (tokenCode == null) {
+            errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
+            context.validationError(formData, errors);
+        }
         if (Validation.isBlank(verificationCode) || tokenCode == null ||
                 !tokenCode.getCode().equals(verificationCode)) {
             context.error(Errors.INVALID_CODE);
@@ -337,6 +362,8 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
             TokenCodeRepresentation tokenCode = session.getProvider(EmailVerificationCodeProvider.class).ongoingProcess(email, TokenCodeType.REGISTRATION);
             if (tokenCode == null) {
                 logger.info("Token code is null");
+                errors.add(new FormMessage(PhoneConstants.FIELD_EMAIL_VERIFICATION_CODE, PhoneConstants.VERIFICATION_CODE_MISMATCH));
+                context.validationError(formData, errors);
             } else {
                 logger.info(tokenCode.getCode());
             }

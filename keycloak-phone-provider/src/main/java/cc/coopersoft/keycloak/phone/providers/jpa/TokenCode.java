@@ -13,7 +13,8 @@ import java.util.Date;
                 name = "ongoingProcess",
                 query = "FROM TokenCode t WHERE t.realmId = :realmId " +
                         "AND t.phoneNumber = :phoneNumber " +
-                        "AND t.expiresAt >= :now AND t.type = :type"
+                        "AND t.expiresAt >= :now AND t.type = :type " +
+                        "AND t.confirmed = false"
         ),
         @NamedQuery(
                 name = "processesSinceTarget",

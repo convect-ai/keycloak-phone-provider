@@ -185,7 +185,6 @@ public class DefaultPhoneVerificationCodeProvider implements PhoneVerificationCo
 
         }
 
-
         if (updateUserPhoneNumber){
             if (!Utils.isDuplicatePhoneAllowed(session)){
                 session.users()
