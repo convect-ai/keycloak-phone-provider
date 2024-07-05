@@ -268,9 +268,6 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
         TokenCodeRepresentation tokenCode;
         tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess(phoneNumber, TokenCodeType.REGISTRATION);
         if (tokenCode == null) {
-            tokenCode = session.getProvider(PhoneVerificationCodeProvider.class).ongoingProcess("+86" + phoneNumber, TokenCodeType.REGISTRATION);
-        }
-        if (tokenCode == null) {
             errors.add(new FormMessage(PhoneConstants.FIELD_VERIFICATION_CODE, PhoneConstants.SMS_CODE_MISMATCH));
             context.validationError(formData, errors);
         }

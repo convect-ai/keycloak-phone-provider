@@ -9,6 +9,7 @@ import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.services.validation.Validation;
+import org.slf4j.LoggerFactory;
 
 import javax.validation.constraints.NotBlank;
 import javax.ws.rs.*;
@@ -20,6 +21,7 @@ import static javax.ws.rs.core.MediaType.APPLICATION_JSON_TYPE;
 public class TokenCodeResource {
 
     private static final Logger logger = Logger.getLogger(TokenCodeResource.class);
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(TokenCodeResource.class);
     protected final KeycloakSession session;
     protected final TokenCodeType tokenCodeType;
 
@@ -44,6 +46,17 @@ public class TokenCodeResource {
             phoneNumber = Utils.canonicalizePhoneNumber(session, phoneNumber);
         } catch (PhoneNumberInvalidException e) {
             throw new BadRequestException("Phone number is invalid");
+        }
+
+        // check if the phone number is already registered
+        logger.info("Checking if phone number is already registered");
+        logger.info(TokenCodeType.REGISTRATION.equals(tokenCodeType));
+        logger.info(Utils.findUserByPhone(session, session.getContext().getRealm(), phoneNumber).isPresent());
+
+        if (!Utils.isDuplicatePhoneAllowed(session) &&
+                TokenCodeType.REGISTRATION.equals(tokenCodeType) &&
+                Utils.findUserByPhone(session, session.getContext().getRealm(), phoneNumber).isPresent()) {
+            throw new ForbiddenException("Phone number already exists");
         }
 
         // everybody phones authenticator send AUTH code

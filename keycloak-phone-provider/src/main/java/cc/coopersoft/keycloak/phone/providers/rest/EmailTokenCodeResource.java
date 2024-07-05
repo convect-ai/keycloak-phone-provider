@@ -44,6 +44,11 @@ public class EmailTokenCodeResource {
             throw new BadRequestException("Email address is invalid");
         }
 
+        // check if the email is already registered
+        if (!session.getContext().getRealm().isDuplicateEmailsAllowed() && session.users().getUserByEmail(session.getContext().getRealm(), email) != null) {
+            throw new ForbiddenException("Email address already exists");
+        }
+
         // everybody phones authenticator send AUTH code
         if (!TokenCodeType.REGISTRATION.equals(tokenCodeType) && !TokenCodeType.AUTH.equals(tokenCodeType) && !TokenCodeType.VERIFY.equals(tokenCodeType)) {
             throw new ForbiddenException("Email Token Code Type only supports REGISTRATION");
