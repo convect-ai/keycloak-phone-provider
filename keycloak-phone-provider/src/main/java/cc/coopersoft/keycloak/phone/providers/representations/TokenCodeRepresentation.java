@@ -38,4 +38,10 @@ public class TokenCodeRepresentation {
         Integer code = secureRandom.nextInt(999_999);
         return String.format("%06d", code);
     }
+
+    @Override
+    public TokenCodeRepresentation clone() {
+        String id = KeycloakModelUtils.generateId();
+        return new TokenCodeRepresentation(id, phoneNumber, code, type, createdAt, expiresAt, confirmed);
+    }
 }
