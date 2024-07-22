@@ -11,7 +11,7 @@
       <column name="REALM_ID" type="VARCHAR(36)">
         <constraints nullable="false"/>
       </column>
-      <column name="PHONE_NUMBER" type="VARCHAR(1024)">
+      <column name="PHONE_NUMBER" type="VARCHAR(20)">
         <constraints nullable="false"/>
       </column>
       <column name="CODE" type="VARCHAR(6)">
