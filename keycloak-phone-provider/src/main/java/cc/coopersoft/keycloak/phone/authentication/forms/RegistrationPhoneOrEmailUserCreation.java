@@ -101,7 +101,7 @@ public class RegistrationPhoneOrEmailUserCreation implements FormActionFactory, 
             form.setAttribute(ATTEMPTED_PHONE_ACTIVATED, true);
         } else {
             logger.info("Building page for email registration");
-            form.setAttribute(ATTEMPTED_PHONE_ACTIVATED, false);
+            // form.setAttribute(ATTEMPTED_PHONE_ACTIVATED, false);
         }
     }
 
