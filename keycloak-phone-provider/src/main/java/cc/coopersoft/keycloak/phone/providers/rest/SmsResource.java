@@ -33,6 +33,11 @@ public class SmsResource {
         return new EmailTokenCodeResource(session, TokenCodeType.REGISTRATION);
     }
 
+    @Path("reset-email-code")
+    public EmailTokenCodeResource getResetEmailCodeResource() {
+        return new EmailTokenCodeResource(session, TokenCodeType.RESET);
+    }
+
     @Path("reset-code")
     public TokenCodeResource getResetCodeResource() {
         return new TokenCodeResource(session, TokenCodeType.RESET);
