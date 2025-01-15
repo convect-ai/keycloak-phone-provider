@@ -113,13 +113,6 @@ public class ResetCredentialEmailWithCode implements Authenticator, Authenticato
             context.clearUser();
             return false;
         }
-        if (!context.getUser().credentialManager().isValid(UserCredentialModel.password(password))) {
-            context.getEvent().error(Errors.INVALID_USER_CREDENTIALS);
-            Response challenge = challenge(context, FIELD_PASSWORD, Errors.INVALID_USER_CREDENTIALS, username);
-            context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
-            context.clearUser();
-            return false;
-        }
 
         String verificationCode = inputData.getFirst(FIELD_CODE);
         logger.info(FIELD_CODE + ": " + verificationCode);
