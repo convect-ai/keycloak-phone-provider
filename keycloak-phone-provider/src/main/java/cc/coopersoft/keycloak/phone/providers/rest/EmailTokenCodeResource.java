@@ -45,13 +45,18 @@ public class EmailTokenCodeResource {
         }
 
         // check if the email is already registered
-        if (!session.getContext().getRealm().isDuplicateEmailsAllowed() && session.users().getUserByEmail(session.getContext().getRealm(), email) != null) {
+        if (!session.getContext().getRealm().isDuplicateEmailsAllowed() &&
+            TokenCodeType.REGISTRATION.equals(tokenCodeType) &&
+            session.users().getUserByEmail(session.getContext().getRealm(), email) != null) {
             throw new ForbiddenException("Email address already exists");
         }
 
         // everybody phones authenticator send AUTH code
-        if (!TokenCodeType.REGISTRATION.equals(tokenCodeType) && !TokenCodeType.AUTH.equals(tokenCodeType) && !TokenCodeType.VERIFY.equals(tokenCodeType)) {
-            throw new ForbiddenException("Email Token Code Type only supports REGISTRATION");
+        if (!TokenCodeType.REGISTRATION.equals(tokenCodeType) &&
+            !TokenCodeType.AUTH.equals(tokenCodeType) &&
+            !TokenCodeType.VERIFY.equals(tokenCodeType) &&
+            !TokenCodeType.RESET.equals(tokenCodeType)) {
+            throw new ForbiddenException("Email Token Code Type only supports REGISTRATION and RESET");
         }
 
         logger.info(String.format("Requested %s code to %s", tokenCodeType.label, email));
