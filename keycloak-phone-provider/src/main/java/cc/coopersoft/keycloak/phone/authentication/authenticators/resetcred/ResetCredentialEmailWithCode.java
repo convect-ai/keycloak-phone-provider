@@ -20,6 +20,8 @@ import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.messages.Messages;
 import org.keycloak.services.validation.Validation;
+import org.keycloak.protocol.oidc.OIDCLoginProtocol;
+import org.keycloak.events.EventType;
 
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
@@ -49,9 +51,9 @@ public class ResetCredentialEmailWithCode implements Authenticator, Authenticato
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
 
         if (!validateForm(context, formData)) {
+            context.clearUser();
             return;
         }
-        context.success();
     }
 
     protected boolean validateForm(AuthenticationFlowContext context, MultivaluedMap<String, String> inputData) {
@@ -104,13 +106,11 @@ public class ResetCredentialEmailWithCode implements Authenticator, Authenticato
             context.getEvent().error(Errors.PASSWORD_MISSING);
             Response challenge = challenge(context, FIELD_PASSWORD, Messages.MISSING_PASSWORD, username);
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
-            context.clearUser();
             return false;
         } else if (!password.equals(passwordConfirm)) {
             context.getEvent().error(Errors.PASSWORD_CONFIRM_ERROR);
             Response challenge = challenge(context, FIELD_PASSWORD_CONFIRM, Messages.INVALID_PASSWORD_CONFIRM, username);
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
-            context.clearUser();
             return false;
         }
 
@@ -124,15 +124,38 @@ public class ResetCredentialEmailWithCode implements Authenticator, Authenticato
             context.getEvent().error(Errors.INVALID_USER_CREDENTIALS);
             Response challenge = challenge(context, FIELD_CODE, SupportPhonePages.Errors.NOT_MATCH.message(), username);
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
-            context.clearUser();
             return false;
         }
+        context.getUser().setEmailVerified(true);
 
         try {
             user.credentialManager().updateCredential(UserCredentialModel.password(password, false));
-        } catch (Exception me) {
-            user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+        } catch (ModelException me) {
+            context.getEvent().error(Errors.PASSWORD_REJECTED);
+            Response challenge = context.form()
+                .addError(new FormMessage(FIELD_PASSWORD, me.getMessage(), me.getParameters()))
+                .setAttribute(FIELD_USERNAME, username)
+                .createPasswordReset();
+            context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
+            return false;
+        } catch (Exception ape) {
+            context.getEvent().error(Errors.PASSWORD_REJECTED);
+            Response challenge = challenge(context, FIELD_PASSWORD, ape.getMessage(), username);
+            context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
+            return false;
         }
+
+        context.getEvent().success();
+        context.getAuthenticationSession().setClientNote(OIDCLoginProtocol.LOGIN_HINT_PARAM, username);
+        context.newEvent().event(EventType.LOGIN);
+        context.getEvent().client(context.getAuthenticationSession().getClient().getClientId())
+                .detail(Details.REDIRECT_URI, context.getAuthenticationSession().getRedirectUri())
+                .detail(Details.AUTH_METHOD, context.getAuthenticationSession().getProtocol());
+        String authType = context.getAuthenticationSession().getAuthNote(Details.AUTH_TYPE);
+        if (authType != null) {
+            context.getEvent().detail(Details.AUTH_TYPE, authType);
+        }
+        context.forkWithSuccessMessage(new FormMessage("resetPasswordSuccess"));
         return true;
     }
 
