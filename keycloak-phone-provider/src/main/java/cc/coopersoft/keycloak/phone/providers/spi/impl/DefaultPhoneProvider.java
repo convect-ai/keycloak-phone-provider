@@ -18,11 +18,17 @@ import javax.ws.rs.ForbiddenException;
 import javax.ws.rs.ServiceUnavailableException;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class DefaultPhoneProvider implements PhoneProvider {
 
     private static final Logger logger = Logger.getLogger(DefaultPhoneProvider.class);
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(DefaultPhoneProvider.class);
+
+    // Per-phone-number lock to prevent concurrent sends to the same number,
+    // which would bypass the resend interval guard and trigger Aliyun's rate limit.
+    private static final ConcurrentHashMap<String, Object> PHONE_LOCKS = new ConcurrentHashMap<>();
+
     private final KeycloakSession session;
     private final String service;
     private final int tokenExpiresIn;
@@ -54,7 +60,7 @@ public class DefaultPhoneProvider implements PhoneProvider {
 
         this.tokenExpiresIn = config.getInt("tokenExpiresIn", 600);
         this.tokenResendIn = config.getInt("tokenResendIn", 60);
-        this.targetHourMaximum = config.getInt("targetHourMaximum", 3);
+        this.targetHourMaximum = config.getInt("targetHourMaximum", 8);
         this.sourceHourMaximum = config.getInt("sourceHourMaximum", 10);
     }
 
@@ -124,23 +130,30 @@ public class DefaultPhoneProvider implements PhoneProvider {
 
         logger.info("send code to:" + phoneNumber);
 
-        if (getTokenCodeService().isAbusing(phoneNumber, type, sourceAddr, sourceHourMaximum, targetHourMaximum)) {
-            throw new ForbiddenException("You requested the maximum number of messages the last hour");
-        }
-
-        TokenCodeRepresentation ongoing = getTokenCodeService().ongoingProcess(phoneNumber, type);
-        if (ongoing != null) {
-            long timeSinceLastSent = Instant.now().toEpochMilli() - ongoing.getCreatedAt().getTime();
-            if (timeSinceLastSent < tokenResendIn * 1000L) {
-                logger.info(String.format("No need of sending a new %s code for %s", type.label, phoneNumber));
-                int expiresAt = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
-                int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + tokenResendIn * 1000 - Instant.now().toEpochMilli());
-                return new SendCodeResult(expiresAt, nextResendIn, false);
-            } else {
-                return handleOngoingProcess(ongoing, phoneNumber, type, kind);
+        // Acquire a per-phone-number lock to serialize concurrent requests for the same number.
+        // Without this, two simultaneous requests could both pass the ongoingProcess==null check
+        // before either persists, leading to double sends (hitting Aliyun's 1-min rate limit)
+        // and duplicate DB records (breaking getSingleResult on subsequent calls).
+        Object lock = PHONE_LOCKS.computeIfAbsent(phoneNumber, k -> new Object());
+        synchronized (lock) {
+            if (getTokenCodeService().isAbusing(phoneNumber, type, sourceAddr, sourceHourMaximum, targetHourMaximum)) {
+                throw new ForbiddenException("You requested the maximum number of messages the last hour");
             }
-        } else {
-            return sendNewToken(phoneNumber, type, kind);
+
+            TokenCodeRepresentation ongoing = getTokenCodeService().ongoingProcess(phoneNumber, type);
+            if (ongoing != null) {
+                long timeSinceLastSent = Instant.now().toEpochMilli() - ongoing.getCreatedAt().getTime();
+                if (timeSinceLastSent < tokenResendIn * 1000L) {
+                    logger.info(String.format("No need of sending a new %s code for %s", type.label, phoneNumber));
+                    int expiresAt = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+                    int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + tokenResendIn * 1000 - Instant.now().toEpochMilli());
+                    return new SendCodeResult(expiresAt, nextResendIn, false);
+                } else {
+                    return handleOngoingProcess(ongoing, phoneNumber, type, kind);
+                }
+            } else {
+                return sendNewToken(phoneNumber, type, kind);
+            }
         }
     }
 

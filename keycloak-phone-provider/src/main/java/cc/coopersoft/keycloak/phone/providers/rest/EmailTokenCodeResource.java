@@ -15,6 +15,7 @@ import javax.validation.constraints.NotBlank;
 import javax.ws.rs.*;
 import javax.ws.rs.core.Response;
 import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static javax.ws.rs.core.MediaType.APPLICATION_JSON;
 import static javax.ws.rs.core.MediaType.APPLICATION_JSON_TYPE;
@@ -22,6 +23,10 @@ import static javax.ws.rs.core.MediaType.APPLICATION_JSON_TYPE;
 public class EmailTokenCodeResource {
 
     private static final Logger logger = Logger.getLogger(TokenCodeResource.class);
+
+    // Per-email lock to prevent concurrent sends to the same address
+    private static final ConcurrentHashMap<String, Object> EMAIL_LOCKS = new ConcurrentHashMap<>();
+
     protected final KeycloakSession session;
     protected final TokenCodeType tokenCodeType;
 
@@ -76,58 +81,62 @@ public class EmailTokenCodeResource {
 
         logger.info("send code to: " + email);
 
-        if (getTokenCodeService().isAbusing(email, type, sourceAddr, 3, 10)) {
-            throw new ForbiddenException("You requested the maximum number of messages the last hour");
-        }
-
-        TokenCodeRepresentation ongoing = getTokenCodeService().ongoingProcess(email, type);
-
-        if (ongoing != null) {
-            long timeSinceLastSent = Instant.now().toEpochMilli() - ongoing.getCreatedAt().getTime();
-            if (timeSinceLastSent < 60 * 1000) {
-                logger.info(String.format("No need of sending a new %s code for %s", type.label, email));
-                int expiresAt = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
-                int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + 60 * 1000 - Instant.now().toEpochMilli());
-                return new SendCodeResult(expiresAt, nextResendIn, false);
-            } else {
-                // Create an ongoing process, which holds the same code as the previous one
-                int expiresIn = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
-                // Make sure that expiresIn is at least tokenResendIn
-                if (expiresIn < 60) {
-                    expiresIn = 60;
-                }
-                try {
-                    getTokenCodeService().sendEmailMessage(type, email, ongoing.getCode(), 600, kind);
-                    // make the old process expired
-                    getTokenCodeService().deprecateCode(ongoing);
-                    TokenCodeRepresentation ongoingNew = ongoing.clone();
-                    getTokenCodeService().persistCode(ongoingNew, type, expiresIn);
-
-                } catch (MessageSendException e) {
-                    logger.error(String.format("Message sending to %s failed with %s: %s",
-                            email, e.getErrorCode(), e.getErrorMessage()));
-                    throw new ServiceUnavailableException("Internal server error");
-                }
-
-                return new SendCodeResult(expiresIn, 60, true);
+        // Acquire a per-email lock to serialize concurrent requests for the same address.
+        Object lock = EMAIL_LOCKS.computeIfAbsent(email, k -> new Object());
+        synchronized (lock) {
+            if (getTokenCodeService().isAbusing(email, type, sourceAddr, 3, 10)) {
+                throw new ForbiddenException("You requested the maximum number of messages the last hour");
             }
+
+            TokenCodeRepresentation ongoing = getTokenCodeService().ongoingProcess(email, type);
+
+            if (ongoing != null) {
+                long timeSinceLastSent = Instant.now().toEpochMilli() - ongoing.getCreatedAt().getTime();
+                if (timeSinceLastSent < 60 * 1000) {
+                    logger.info(String.format("No need of sending a new %s code for %s", type.label, email));
+                    int expiresAt = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+                    int nextResendIn = (int) (ongoing.getCreatedAt().getTime() + 60 * 1000 - Instant.now().toEpochMilli());
+                    return new SendCodeResult(expiresAt, nextResendIn, false);
+                } else {
+                    // Create an ongoing process, which holds the same code as the previous one
+                    int expiresIn = (int) (ongoing.getExpiresAt().getTime() - Instant.now().toEpochMilli()) / 1000;
+                    // Make sure that expiresIn is at least tokenResendIn
+                    if (expiresIn < 60) {
+                        expiresIn = 60;
+                    }
+                    try {
+                        getTokenCodeService().sendEmailMessage(type, email, ongoing.getCode(), 600, kind);
+                        // make the old process expired
+                        getTokenCodeService().deprecateCode(ongoing);
+                        TokenCodeRepresentation ongoingNew = ongoing.clone();
+                        getTokenCodeService().persistCode(ongoingNew, type, expiresIn);
+
+                    } catch (MessageSendException e) {
+                        logger.error(String.format("Message sending to %s failed with %s: %s",
+                                email, e.getErrorCode(), e.getErrorMessage()));
+                        throw new ServiceUnavailableException("Internal server error");
+                    }
+
+                    return new SendCodeResult(expiresIn, 60, true);
+                }
+            }
+
+            TokenCodeRepresentation token = TokenCodeRepresentation.forPhoneNumber(email);
+
+            try {
+                getTokenCodeService().sendEmailMessage(type, email, token.getCode(), 600, kind);
+                getTokenCodeService().persistCode(token, type, 600);
+
+                logger.info(String.format("Sent %s code to %s", type.label, email));
+
+            } catch (MessageSendException e) {
+
+                logger.error(String.format("Message sending to %s failed with %s: %s", email, e.getErrorCode(), e.getErrorMessage()));
+                throw new ServiceUnavailableException("Internal server error");
+            }
+
+            return new SendCodeResult(600, 60, true);
         }
-
-        TokenCodeRepresentation token = TokenCodeRepresentation.forPhoneNumber(email);
-
-        try {
-            getTokenCodeService().sendEmailMessage(type, email, token.getCode(), 600, kind);
-            getTokenCodeService().persistCode(token, type, 600);
-
-            logger.info(String.format("Sent %s code to %s", type.label, email));
-
-        } catch (MessageSendException e) {
-
-            logger.error(String.format("Message sending to %s failed with %s: %s", email, e.getErrorCode(), e.getErrorMessage()));
-            throw new ServiceUnavailableException("Internal server error");
-        }
-
-        return new SendCodeResult(600, 60, true);
     }
 
 }
